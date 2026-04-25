@@ -5,82 +5,71 @@ try { dotenv.config(); } catch(e) {}
 
 const CONFIG = {
   BINANCE_KEY: process.env.BINANCE_KEY,
-  GEMINI_KEY: process.env.GEMINI_KEY,
-  AI_MODEL: 'gemini-1.5-flash'
+  GROQ_KEY: process.env.GROQ_API_KEY || process.env.GEMINI_KEY, // سيقبل المفتاح تحت أي من الاسمين
+  MODEL: 'llama-3.3-70b-versatile'
 };
 
 const LOG = (step, msg) => console.log(`[${step}] ${msg}`);
 const LOG_E = (step, msg) => console.error(`[${step}] ❌ ${msg}`);
 
 async function generateAIContent() {
-  // هنا نطلب من الذكاء الاصطناعي جلب الأسعار بنفسه وتحليلها
-  const prompt = `اعمل كمحلل أسواق كريبتو محترف. 
-  1. اجلب أسعار العملات التالية الآن: BTC, ETH, SOL, BNB مقابل USDT.
-  2. اكتب تقرير إخباري لـ Binance Square باللغة العربية.
-  3. الهيكل: عنوان جذاب، قائمة الأسعار مع نسبة التغيير، تحليل سريع للسوق، نصيحة تفاعلية.
-  4. أضف إخلاء مسؤولية: "هذا المحتوى ليس نصيحة استثمارية".
-  5. استخدم الهاشتاقات: #BinanceSquare #CryptoMarket #Bitcoin.
-  تأكد أن الأرقام حقيقية ومنطقية للسوق اليوم.`;
+  const prompt = `أنت محلل أسواق كريبتو محترف. 
+  المهمة: اكتب تقرير إخباري حياً لـ Binance Square باللغة العربية.
+  المطلوب: 
+  1. ابحث عن أسعار BTC, ETH, SOL و BNB الآن.
+  2. التنسيق: عنوان مثير، قائمة العملات مع أسعارها التقديرية وتغييرها اليومي، تحليل سريع للاتجاه (صعود/هبوط).
+  3. أضف إخلاء مسؤولية قانوني في النهاية.
+  4. استخدم هاشتاقات: #BinanceSquare #Bitcoin #CryptoNews.`;
 
   try {
-    LOG('AI', 'جاري طلب التحليل والبيانات من Gemini...');
+    LOG('Groq', 'جاري طلب التحليل من Groq Cloud...');
+    
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/${CONFIG.AI_MODEL}:generateContent?key=${CONFIG.GEMINI_KEY}`,
-      { contents: [{ parts: [{ text: prompt }] }] },
-      { timeout: 30000 }
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: CONFIG.MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${CONFIG.GROQ_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 20000
+      }
     );
 
-    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const text = response.data?.choices?.[0]?.message?.content;
     if (text) {
-      LOG('AI', '✅ تم توليد المحتوى بنجاح.');
+      LOG('Groq', '✅ تم توليد المحتوى بسرعة فائقة!');
       return text.trim();
     }
   } catch (e) {
-    LOG_E('AI', `فشل الذكاء الاصطناعي: ${e.message}`);
+    LOG_E('Groq', `فشل الاتصال: ${e.response?.data?.error?.message || e.message}`);
   }
   return null;
 }
 
 async function publishToBinance(content) {
-  if (!CONFIG.BINANCE_KEY) {
-    LOG_E('نشر', 'مفتاح BINANCE_KEY غير موجود في الإعدادات!');
-    return;
-  }
-
   try {
-    LOG('نشر', 'جاري إرسال المنشور إلى Binance Square OpenAPI...');
+    LOG('نشر', 'جاري الإرسال إلى Binance Square...');
     const res = await axios.post(
       'https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add',
       { bodyTextOnly: content },
-      { 
-        headers: { 
-          'X-Square-OpenAPI-Key': CONFIG.BINANCE_KEY,
-          'Content-Type': 'application/json' 
-        },
-        timeout: 15000 
-      }
+      { headers: { 'X-Square-OpenAPI-Key': CONFIG.BINANCE_KEY } }
     );
-    
-    if (res.data && res.data.success !== false) {
-      LOG('نشر', '🎉 تم النشر بنجاح على Binance Square!');
-    } else {
-      LOG_E('نشر', `رد غير متوقع من بينانس: ${JSON.stringify(res.data)}`);
-    }
+    LOG('نشر', '🎉 تم النشر بنجاح!');
   } catch (e) {
-    LOG_E('نشر', `فشل عملية النشر: ${e.response?.data?.message || e.message}`);
+    LOG_E('نشر', `فشل النشر: ${e.message}`);
   }
 }
 
 async function run() {
-  console.log('--- بدء دورة النشر الذكية (تجاوز الحظر) ---');
+  console.log('--- تشغيل البوت باستخدام محرك Groq الصاروخي ---');
   const postText = await generateAIContent();
-  
-  if (postText) {
-    await publishToBinance(postText);
-  } else {
-    LOG_E('نظام', 'فشلت الدورة بسبب عدم توفر محتوى.');
-    process.exit(1);
-  }
+  if (postText) await publishToBinance(postText);
+  else process.exit(1);
 }
 
 run();
