@@ -1,0 +1,33 @@
+name: Binance Square Precise Publisher
+
+on:
+  # هذا المحفز يضمن التشغيل الفوري عند وصول إشارة من Make.com
+  repository_dispatch:
+    types: [trigger_hourly_post]
+  
+  # الاحتفاظ بخيار التشغيل اليدوي من واجهة GitHub للتجربة
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Dependencies
+      # استخدام npm ci أسرع وأكثر استقراراً في بيئات الـ Actions
+      run: npm ci 
+
+    - name: Run Bot Script
+      env:
+        BINANCE_KEY: ${{ secrets.BINANCE_KEY }}
+        GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+        NODE_ENV: production
+      run: node bot.js
