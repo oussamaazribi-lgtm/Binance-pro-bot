@@ -1,11 +1,11 @@
 name: Binance Square Precise Publisher
 
 on:
-  # هذا المحفز يضمن التشغيل الفوري عند وصول إشارة من Make.com
+  # استقبال الإشارة من Make.com
   repository_dispatch:
     types: [trigger_hourly_post]
   
-  # الاحتفاظ بخيار التشغيل اليدوي من واجهة GitHub للتجربة
+  # السماح بالتشغيل اليدوي للتجربة
   workflow_dispatch:
 
 jobs:
@@ -22,8 +22,8 @@ jobs:
         node-version: '20'
 
     - name: Install Dependencies
-      # استخدام npm ci أسرع وأكثر استقراراً في بيئات الـ Actions
-      run: npm ci 
+      # تم تغيير npm ci إلى npm install لتجاوز خطأ الـ lockfile
+      run: npm install
 
     - name: Run Bot Script
       env:
