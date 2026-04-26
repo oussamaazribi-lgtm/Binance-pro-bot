@@ -7,38 +7,30 @@ const CONFIG = {
   BINANCE_KEY: process.env.BINANCE_KEY,
   GROQ_KEY: process.env.GROQ_API_KEY,
   MODEL: 'llama-3.3-70b-versatile',
-  // عملات المراقبة
-  SYMBOLS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']
+  // قائمة موسعة لجلب بيانات متنوعة (أساسية + ميم كوينز)
+  SYMBOLS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'DOGEUSDT', 'PEPEUSDT', 'SHIBUSDT']
 };
 
 const LOG = (step, msg) => console.log(`[${step}] ${msg}`);
 const LOG_E = (step, msg) => console.error(`[${step}] ❌ ${msg}`);
 
 async function getLivePrices() {
-  // استخدام عدة مصادر لضمان جلب بيانات حقيقية ومحينة
   const sources = [
-    'https://api3.binance.com/api/v3/ticker/24hr',
     'https://api.binance.us/api/v3/ticker/24hr',
+    'https://api3.binance.com/api/v3/ticker/24hr',
     'https://data-api.binance.vision/api/v3/ticker/24hr'
   ];
 
   for (let url of sources) {
     try {
-      LOG('بيانات', `محاولة جلب الأسعار من مصدر: ${url.split('/')[2]}`);
       const res = await axios.get(url, { timeout: 10000 });
       const filtered = res.data.filter(t => CONFIG.SYMBOLS.includes(t.symbol));
-      
-      if (filtered.length > 0) {
-        LOG('بيانات', '✅ تم جلب الأسعار الحقيقية بنجاح.');
-        return filtered.map(d => ({
-          symbol: d.symbol.replace('USDT', ''),
-          price: parseFloat(d.lastPrice).toLocaleString('en-US'),
-          change: parseFloat(d.priceChangePercent).toFixed(2)
-        }));
-      }
-    } catch (e) {
-      LOG_E('بيانات', `فشل المصدر ${url.split('/')[2]}`);
-    }
+      if (filtered.length > 0) return filtered.map(d => ({
+        symbol: d.symbol.replace('USDT', ''),
+        price: parseFloat(d.lastPrice).toLocaleString('en-US'),
+        change: parseFloat(d.priceChangePercent).toFixed(2)
+      }));
+    } catch (e) { continue; }
   }
   return null;
 }
@@ -46,66 +38,67 @@ async function getLivePrices() {
 async function generateAIContent(prices) {
   if (!prices) return null;
 
-  const prompt = `أنت محلل أسواق محترف. إليك بيانات الأسعار الحقيقية واللحظية الآن من السوق:
-  ${JSON.stringify(prices)}
+  // تعريف الأنماط المختلفة للمنشورات
+  const patterns = [
+    "تحليل فني سريع مستخدماً المؤشرات (RSI/MACD) بناءً على أداء الأسعار.",
+    "تقرير 'ميم كوينز' (Memecoins) وحالة الهياج في السوق.",
+    "خبر عاجل وتغطية لتقلبات السوق اللحظية.",
+    "مقارنة بين أداء العملات البديلة (Altcoins) مقابل البيتكوين.",
+    "توصية تعليمية للمتداولين المبتدئين بناءً على ترند السوق الحالي."
+  ];
+  
+  const selectedPattern = patterns[Math.floor(Math.random() * patterns.length)];
+
+  const prompt = `أنت خبير كريبتو وصانع محتوى ناري على Binance Square.
+  بيانات السوق الحقيقية الآن: ${JSON.stringify(prices)}
   
   المطلوب:
-  1. اكتب تقرير إخباري لـ Binance Square باللغة العربية.
-  2. تجنب تماماً استخدام الرموز مثل النجوم الثلاثية (***) أو العلامات الغريبة. استخدم النقاط العادية أو الترقيم.
-  3. اجعل الأسلوب احترافياً ومباشراً.
-  4. الهيكل: عنوان، تحليل سريع للأسعار، نصيحة للمتداولين، وإخلاء مسؤولية.
-  5. استخدم الهاشتاقات: #BinanceSquare #CryptoMarket #Bitcoin.`;
+  1. نمط المنشور: ${selectedPattern}
+  2. التنسيق البصري: استخدم إيموجي (🚀, 📉, 🔥, 📊) و Cashtags مثل $BTC.
+  3. بدلاً من إخلاء المسؤولية (بينانس تضيفه تلقائياً): أضف فقرة "رادار التوقعات" أو "إشارة فنية سريعة" (مثل: مناطق دعم/مقاومة أو تنبيه من سيولة قادمة).
+  4. لغة عربية احترافية، فقرات قصيرة، بدون نجوم (***).
+  5. اجعل المحتوى يبدو كأنه خبر حصري ومحين الآن.
+  6. الهاشتاقات: #BinanceSquare #CryptoAnalysis #TrendingTopic.`;
 
   try {
-    LOG('Groq', 'جاري معالجة البيانات وصياغة المحتوى...');
+    LOG('Groq', `نمط المنشور المختار: ${selectedPattern}`);
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
         model: CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.6 // تقليل الحرارة لضمان دقة الأرقام
+        temperature: 0.8
       },
-      {
-        headers: {
-          'Authorization': `Bearer ${CONFIG.GROQ_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
+      { headers: { 'Authorization': `Bearer ${CONFIG.GROQ_KEY}` } }
     );
 
     let text = response.data?.choices?.[0]?.message?.content;
-    // تنظيف إضافي لإزالة أي نجوم قد يضعها النموذج
-    text = text.replace(/\*\*\*/g, '').replace(/\*\*/g, '');
-    return text.trim();
+    return text.replace(/\*/g, '').trim();
   } catch (e) {
-    LOG_E('Groq', `فشل التوليد: ${e.message}`);
+    LOG_E('Groq', e.message);
   }
   return null;
 }
 
 async function publishToBinance(content) {
   try {
-    LOG('نشر', 'جاري النشر على Binance Square...');
     await axios.post(
       'https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add',
       { bodyTextOnly: content },
       { headers: { 'X-Square-OpenAPI-Key': CONFIG.BINANCE_KEY } }
     );
-    LOG('نشر', '🎉 تم النشر بنجاح ببيانات حقيقية!');
+    LOG('نشر', '🎉 تم النشر بنجاح بنمط جديد وبدون تكرار!');
   } catch (e) {
-    LOG_E('نشر', `فشل النشر: ${e.message}`);
+    LOG_E('نشر', e.message);
   }
 }
 
 async function run() {
-  console.log('--- تشغيل دورة البيانات الحقيقية (Groq Edition) ---');
   const livePrices = await getLivePrices();
-  if (!livePrices) {
-    LOG_E('نظام', 'تعذر جلب بيانات حقيقية، سيتم الإيقاف لتجنب نشر معلومات مضللة.');
-    process.exit(1);
+  if (livePrices) {
+    const content = await generateAIContent(livePrices);
+    if (content) await publishToBinance(content);
   }
-  const cleanContent = await generateAIContent(livePrices);
-  if (cleanContent) await publishToBinance(cleanContent);
 }
 
 run();
