@@ -1,11 +1,11 @@
 name: Binance Square Precise Publisher
 
 on:
-  # استقبال الإشارة من Make.com لعمل تشغيل آلي
+  # استقبال الإشارة من Make.com
   repository_dispatch:
-    types: [trigger_hourly_post]
+    types: [run-bot]  # قمت بتغييرها لتطابق ما وضعناه في Make
   
-  # السماح بالتشغيل اليدوي للتجربة من تبويب Actions
+  # السماح بالتشغيل اليدوي للتجربة
   workflow_dispatch:
 
 jobs:
@@ -22,12 +22,10 @@ jobs:
         node-version: '20'
 
     - name: Install Dependencies
-      # نستخدم install لضمان تثبيت المكتبات حتى في غياب ملف lock
       run: npm install
 
     - name: Run Bot Script
       env:
-        # تأكد أن هذه الأسماء تطابق ما وضعته في GitHub Secrets
         BINANCE_KEY: ${{ secrets.BINANCE_KEY }}
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         NODE_ENV: production
