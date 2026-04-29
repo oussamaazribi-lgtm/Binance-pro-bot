@@ -17,7 +17,7 @@ const LOG_E = (step, msg) => console.error(`[${step}] ❌ ${msg}`);
  */
 async function getAlphaList() {
   try {
-    LOG('سوق', 'جاري جلب قائمة الصدارة (Alpha)...');
+    LOG('سوق', 'جاري رصد قائمة الصدارة (Alpha)...');
     const res = await axios.get('https://api.binance.us/api/v3/ticker/24hr');
     const alphaCandidates = res.data
       .filter(d => d.symbol.endsWith('USDT'))
@@ -33,20 +33,14 @@ async function getAlphaList() {
 }
 
 /**
- * 2. توليد المحتوى بأسلوب بشري غير متكرر
+ * 2. توليد المحتوى (أسلوب بشري متنوع)
  */
 async function generateAIContent(alphaData) {
   if (!alphaData) return null;
   
-  const prompt = `أنت محلل كريبتو بشري محترف على Binance Square. 
-  بيانات الـ Alpha اللحظية: ${JSON.stringify(alphaData)}. 
-  
-  المطلوب:
-  1. اكتب مقالاً تحليلياً سريعاً وجذاباً عن هذه العملات المتصدرة.
-  2. استخدم Cashtags (مثل $SOL) وإيموجي.
-  3. الأسلوب: بشري، متنوع، لا يبدأ بنفس الجملة دائماً.
-  4. ممنوع تماماً استخدام النجوم (***).
-  5. اللغة: عربية فصحى طبيعية.`;
+  const prompt = `أنت محلل كريبتو بشري محترف تنشر على Binance Square. 
+  حلل قائمة الـ Alpha الحالية: ${JSON.stringify(alphaData)}. 
+  المطلوب: مقال جذاب، استخدام Cashtags ($BTC)، بدون نجوم (***)، وبأسلوب بشري غير مكرر.`;
 
   try {
     LOG('AI', 'جاري صياغة المحتوى...');
@@ -59,21 +53,30 @@ async function generateAIContent(alphaData) {
       },
       { headers: { 'Authorization': `Bearer ${CONFIG.GROQ_KEY}`, 'Content-Type': 'application/json' } }
     );
-    return response.data?.choices?.[0]?.message?.content?.replace(/\*/g, '').trim();
+    const content = response.data?.choices?.[0]?.message?.content?.replace(/\*/g, '').trim();
+    return content || null;
   } catch (e) { return null; }
 }
 
 /**
- * 3. النشر (الصيغة الأصلية والمباشرة)
+ * 3. النشر (الإصلاح الجذري لحقول البيانات)
  */
 async function publishToBinance(content) {
+  if (!content) {
+    LOG_E('نشر', 'المحتوى فارغ، تم إلغاء الإرسال.');
+    return;
+  }
+
   try {
     LOG('نشر', 'إرسال البيانات إلى Binance Square...');
     
-    // ملاحظة: قمنا بإعادة الحقل إلى content فقط وهو الحقل الأكثر استقراراً
+    // إرسال المحتوى في كلاً من الحقلين لضمان القبول حسب نوع الـ API المتاح لك
     const payload = {
-      title: "تحليل رادار Alpha اليومي 🚀",
-      content: content
+      title: "رادار Alpha: تحليل قائمة الصدارة والزخم اللحظي 🚀",
+      content: content,           // الحقل الأساسي للمقالات
+      bodyTextOnly: content,      // الحقل الأساسي للمنشورات السريعة
+      type: "ARTICLE",
+      language: "ar"
     };
 
     const res = await axios.post(
@@ -87,12 +90,15 @@ async function publishToBinance(content) {
       }
     );
 
-    // إذا كان الرد يحتوي على معرف (ID) للمنشور، فهذا يعني نجاحاً حقيقياً
-    if (res.data) {
-      LOG('نشر', `✅ تم النشر! استجابة النظام: ${JSON.stringify(res.data)}`);
+    if (res.data && res.data.success) {
+      LOG('نشر', `✅ تم النشر بنجاح! ID: ${JSON.stringify(res.data.data)}`);
+    } else {
+      LOG_E('نشر', `فشل النشر: ${res.data.message}`);
+      // طباعة الرد للتأكد من سبب الفشل إذا استمر
+      console.log('رد الخادم:', JSON.stringify(res.data));
     }
   } catch (e) {
-    LOG_E('نشر', `خطأ في الإرسال: ${e.response?.data?.message || e.message}`);
+    LOG_E('نشر', `خطأ اتصال: ${e.response?.data?.message || e.message}`);
   }
 }
 
