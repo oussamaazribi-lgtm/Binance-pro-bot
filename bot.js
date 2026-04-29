@@ -1,20 +1,17 @@
 const axios = require('axios');
 const dotenv = require('dotenv');
 
-// تحميل الإعدادات من ملف .env (للتشغيل المحلي)
 try { dotenv.config(); } catch(e) {}
 
 const CONFIG = {
   BINANCE_KEY: process.env.BINANCE_KEY,
   GROQ_KEY: process.env.GROQ_API_KEY,
   MODEL: 'llama-3.3-70b-versatile',
-  // قائمة العملات (القيادية + العملات البديلة تحت 1 دولار + عملات رائدة)
+  // القائمة الذهبية التي طلبتها (قيادية + Alpha + رخيصة)
   SYMBOLS: [
-    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 
-    'PEPEUSDT', 'DOGEUSDT', 'SHIBUSDT', 'FLOKIUSDT', 'BONKUSDT', 
-    'GALAUSDT', 'NEARUSDT', 'FETUSDT', 'LUNCUSDT', 'STXUSDT', 
-    'ORDIUSDT', 'SATSUSDT', 'PYTHUSDT', 'TIAUSDT', 'JUPUSDT',
-    'WIFUSDT', 'NOTUSDT', 'ARBUSDT', 'OPUSDT'
+    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'PEPEUSDT', 
+    'DOGEUSDT', 'SHIBUSDT', 'BONKUSDT', 'GALAUSDT', 'FETUSDT', 
+    'LUNCUSDT', 'NOTUSDT', 'WIFUSDT', 'JUPUSDT', 'FLOKIUSDT'
   ]
 };
 
@@ -22,136 +19,117 @@ const LOG = (step, msg) => console.log(`[${step}] ${msg}`);
 const LOG_E = (step, msg) => console.error(`[${step}] ❌ ${msg}`);
 
 /**
- * 1. رادار السوق: جلب البيانات بصيغة متوافقة مع شروط بينانس لتفادي أخطاء 400 و 451
+ * 1. جلب البيانات (استراتيجية الطلبات الفردية المضمونة)
  */
 async function getMarketData() {
-  // تحويل القائمة لصيغة ["BTCUSDT","ETHUSDT"...] مع تشفير الرابط
-  const symbolsQuery = encodeURIComponent(JSON.stringify(CONFIG.SYMBOLS));
-  
-  const endpoints = [
-    `https://api.binance.us/api/v3/ticker/24hr?symbols=${symbolsQuery}`,
-    `https://data-api.binance.vision/api/v3/ticker/24hr?symbols=${symbolsQuery}`
-  ];
+  LOG('رادار', 'بدء جلب بيانات العملات الفردية لتجنب أخطاء الصيغة...');
+  const results = [];
 
-  for (let url of endpoints) {
-    try {
-      LOG('رادار', `محاولة جلب البيانات من: ${url.split('/')[2]}...`);
-      const res = await axios.get(url, { timeout: 15000 });
-      
-      if (res.data && Array.isArray(res.data)) {
-        LOG('رادار', '✅ نجح الاتصال وجلب البيانات!');
-        return res.data.map(d => ({
-          symbol: d.symbol.replace('USDT', ''),
-          price: parseFloat(d.lastPrice) < 0.001 ? d.lastPrice : parseFloat(d.lastPrice).toLocaleString('en-US'),
-          change: parseFloat(d.priceChangePercent).toFixed(2),
-          volume: (parseFloat(d.quoteVolume) / 1000000).toFixed(2) + 'M',
-          isAlpha: parseFloat(d.lastPrice) < 1.0,
-          high: parseFloat(d.highPrice).toLocaleString(),
-          low: parseFloat(d.lowPrice).toLocaleString()
-        }));
-      }
-    } catch (e) {
-      LOG_E('رادار', `فشل الرابط ${url.split('/')[2]}: ${e.response?.status || e.message}`);
-      continue; 
+  // نستخدم Promise.all لطلب كل العملات في نفس اللحظة بسرعة فائقة
+  const requests = CONFIG.SYMBOLS.map(symbol => {
+    // نستخدم الرابط الأمريكي لأنه الأكثر استقراراً مع GitHub
+    const url = `https://api.binance.us/api/v3/ticker/24hr?symbol=${symbol}`;
+    return axios.get(url, { timeout: 5000 }).catch(e => null);
+  });
+
+  const responses = await Promise.all(requests);
+
+  for (const res of responses) {
+    if (res && res.data) {
+      const d = res.data;
+      results.push({
+        symbol: d.symbol.replace('USDT', ''),
+        price: parseFloat(d.lastPrice) < 0.001 ? d.lastPrice : parseFloat(d.lastPrice).toLocaleString('en-US'),
+        change: parseFloat(d.priceChangePercent).toFixed(2),
+        volume: (parseFloat(d.quoteVolume) / 1000000).toFixed(2) + 'M',
+        isAlpha: parseFloat(d.lastPrice) < 1.0
+      });
     }
   }
+
+  if (results.length > 0) {
+    LOG('رادار', `✅ نجح صيد ${results.length} عملة من السوق!`);
+    return results;
+  }
+  
+  LOG_E('رادار', 'فشلت جميع محاولات جلب العملات.');
   return null;
 }
 
 /**
- * 2. جلب مستجدات السوق من مصدر خارجي
+ * 2. الأخبار (تحديث لرابط أكثر استقراراً)
  */
 async function getDetailedNews() {
   try {
-    LOG('أخبار', 'سحب آخر مستجدات السوق...');
+    LOG('أخبار', 'جاري جلب نبض السوق...');
     const res = await axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN', { timeout: 10000 });
-    
-    if (res.data && res.data.Data) {
-      return res.data.Data.slice(0, 3).map(n => ({
-        title: n.title,
-        summary: n.body.substring(0, 300)
-      }));
+    if (res.data?.Data) {
+      return res.data.Data.slice(0, 3).map(n => ({ title: n.title, summary: n.body.substring(0, 200) }));
     }
   } catch (e) {
-    LOG_E('أخبار', 'فشل جلب الأخبار، الاعتماد على تحليل السيولة.');
+    LOG_E('أخبار', 'سيعتمد التحليل على البيانات الرقمية فقط.');
   }
   return null;
 }
 
 /**
- * 3. توليد المحتوى الاحترافي عبر Groq (Llama 3.3)
+ * 3. الذكاء الاصطناعي (Groq)
  */
 async function generateAIContent(marketData, news) {
-  if (!marketData || marketData.length === 0) return null;
+  if (!marketData) return null;
 
-  const prompt = `أنت خبير "Alpha Hunter" ومحلل تقني رائد على Binance Square.
-  
-  بيانات الرادار اللحظية: ${JSON.stringify(marketData)}
-  أخبار السوق: ${news ? JSON.stringify(news) : "ركز على انفجار السيولة وحركة السعر."}
+  const prompt = `أنت خبير "Alpha Hunter" على Binance Square. حلل هذه البيانات اللحظية:
+  البيانات: ${JSON.stringify(marketData)}
+  الأخبار: ${news ? JSON.stringify(news) : "ركز على السيولة."}
   
   المطلوب:
-  1. ركز على العملات البديلة (Altcoins) المذكورة وسعرها أقل من 1 دولار كفرص "Alpha" واعدة.
-  2. اربط بين استقرار البيتكوين $BTC والزخم الموجود في عملات الميم والعملات الرائجة.
-  3. التنسيق: استخدم Cashtags (مثل $SOL)، فقرات جذابة، وإيموجي احترافي (🔥, 📊, 🚀).
-  4. ممنوع تماماً استخدام النجوم (***) أو إخلاء المسؤولية التقليدي.
-  5. الخاتمة: "رادار التوقع" للتحركات القادمة.
-  
-  اللغة: عربية فصحى عصرية قوية وجذابة.`;
+  1. سلط الضوء على العملات البديلة (Altcoins) تحت 1 دولار ووصفها كفرص Alpha.
+  2. اربط حركة $BTC بالنشاط الحالي.
+  3. التنسيق: Cashtags، إيموجي احترافي، بدون نجوم (***)، وبدون إخلاء مسؤولية.
+  4. اللغة: عربية احترافية جذابة.`;
 
   try {
-    LOG('AI', 'جاري صياغة التقرير الفني...');
+    LOG('AI', 'جاري معالجة المحتوى...');
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
         model: CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.6
+        temperature: 0.7
       },
       { headers: { 'Authorization': `Bearer ${CONFIG.GROQ_KEY}`, 'Content-Type': 'application/json' } }
     );
-
-    let text = response.data?.choices?.[0]?.message?.content;
-    if (!text) return null;
-    return text.replace(/\*/g, '').trim();
+    return response.data?.choices?.[0]?.message?.content?.replace(/\*/g, '').trim();
   } catch (e) {
-    LOG_E('AI', `فشل توليد المحتوى: ${e.message}`);
+    LOG_E('AI', 'فشل التوليد.');
   }
   return null;
 }
 
 /**
- * 4. النشر التلقائي على Binance Square
+ * 4. النشر
  */
 async function publishToBinance(content) {
   try {
-    LOG('نشر', 'إرسال المقال إلى Binance Square...');
+    LOG('نشر', 'إرسال إلى Binance Square...');
     await axios.post(
       'https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add',
       { bodyTextOnly: content },
       { headers: { 'X-Square-OpenAPI-Key': CONFIG.BINANCE_KEY } }
     );
-    LOG('نشر', '✅ تم النشر بنجاح! منشور Alpha جاهز.');
+    LOG('نشر', '✅ مبروك! تم النشر بنجاح.');
   } catch (e) {
-    LOG_E('نشر', `فشل النشر: ${e.message}`);
+    LOG_E('نشر', `خطأ في API بينانس: ${e.message}`);
   }
 }
 
-/**
- * التشغيل الرئيسي
- */
 async function run() {
   console.log(`\n--- دورة العمل: ${new Date().toLocaleString()} ---`);
-  
   const market = await getMarketData();
   const news = await getDetailedNews();
-  
-  if (market && market.length > 0) {
+  if (market) {
     const post = await generateAIContent(market, news);
-    if (post) {
-      await publishToBinance(post);
-    }
-  } else {
-    LOG_E('نظام', 'تعذر جلب البيانات الكافية، تم إيقاف الدورة.');
+    if (post) await publishToBinance(post);
   }
 }
 
