@@ -8,101 +8,106 @@ const CONFIG = {
   BINANCE_KEY: process.env.BINANCE_KEY,
   GROQ_KEY: process.env.GROQ_API_KEY,
   MODEL: 'llama-3.3-70b-versatile',
-  // قائمة العملات لمراقبة الأداء والميم كوينز
-  SYMBOLS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'PEPEUSDT', 'DOGEUSDT']
+  // العملات القيادية الثابتة للربط التحليلي
+  LEADERS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
 };
 
 const LOG = (step, msg) => console.log(`[${step}] ${msg}`);
 const LOG_E = (step, msg) => console.error(`[${step}] ❌ ${msg}`);
 
 /**
- * 1. جلب بيانات السوق الحقيقية والمحينة (أسعار + حجم تداول + تغير)
+ * 1. رادار السوق الذكي: جلب العملات الرائجة + العملات تحت 1 دولار + العملات القيادية
  */
 async function getMarketData() {
-  const sources = [
-    'https://api.binance.us/api/v3/ticker/24hr',
-    'https://api3.binance.com/api/v3/ticker/24hr'
-  ];
+  const url = 'https://api3.binance.com/api/v3/ticker/24hr';
 
-  for (let url of sources) {
-    try {
-      LOG('بيانات', `جلب الأسعار من: ${url.split('/')[2]}`);
-      const res = await axios.get(url, { timeout: 10000 });
-      const filtered = res.data.filter(t => CONFIG.SYMBOLS.includes(t.symbol));
-      
-      if (filtered.length > 0) {
-        return filtered.map(d => ({
-          symbol: d.symbol.replace('USDT', ''),
-          price: parseFloat(d.lastPrice).toLocaleString('en-US'),
-          change: parseFloat(d.priceChangePercent).toFixed(2),
-          volume: (parseFloat(d.quoteVolume) / 1000000).toFixed(2) + 'M',
-          high: parseFloat(d.highPrice).toLocaleString(),
-          low: parseFloat(d.lowPrice).toLocaleString()
-        }));
-      }
-    } catch (e) { continue; }
+  try {
+    LOG('رادار', 'جاري مسح السوق للبحث عن فرص Alpha والعملات الرائجة...');
+    const res = await axios.get(url, { timeout: 15000 });
+    const allTickers = res.data;
+
+    // أ. جلب بيانات العملات القيادية
+    const leadersData = allTickers.filter(t => CONFIG.LEADERS.includes(t.symbol));
+
+    // ب. جلب العملات البديلة "الرائجة" (أعلى حجم تداول) وسعرها أقل من 1 دولار
+    // نستهدف العملات المقترنة بـ USDT وتملك سيولة عالية
+    const trendingAlts = allTickers
+      .filter(t => 
+        t.symbol.endsWith('USDT') && 
+        parseFloat(t.lastPrice) < 1.0 && 
+        parseFloat(t.lastPrice) > 0 &&
+        !CONFIG.LEADERS.includes(t.symbol)
+      )
+      .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+      .slice(0, 6); // خذ أفضل 6 عملات "رخيصة" رائجة
+
+    const finalSelection = [...leadersData, ...trendingAlts];
+
+    return finalSelection.map(d => ({
+      symbol: d.symbol.replace('USDT', ''),
+      price: parseFloat(d.lastPrice) < 0.001 ? d.lastPrice : parseFloat(d.lastPrice).toLocaleString('en-US'),
+      change: parseFloat(d.priceChangePercent).toFixed(2),
+      volume: (parseFloat(d.quoteVolume) / 1000000).toFixed(2) + 'M',
+      isAlpha: parseFloat(d.lastPrice) < 1.0,
+      high: parseFloat(d.highPrice).toLocaleString(),
+      low: parseFloat(d.lowPrice).toLocaleString()
+    }));
+  } catch (e) {
+    LOG_E('رادار', `فشل جلب بيانات السوق: ${e.message}`);
+    return null;
   }
-  return null;
 }
 
 /**
- * 2. جلب أخبار حقيقية مفصلة (العنوان + ملخص الخبر)
+ * 2. جلب أخبار حقيقية مفصلة
  */
 async function getDetailedNews() {
   try {
-    LOG('أخبار', 'جاري سحب الأخبار المفصلة من مجمع CryptoCompare...');
-    // المصدر يوفر ملخص كامل للخبر (Body) وليس العنوان فقط
+    LOG('أخبار', 'سحب آخر مستجدات السوق من CryptoCompare...');
     const res = await axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN', { timeout: 10000 });
     
     if (res.data && res.data.Data) {
       return res.data.Data.slice(0, 3).map(n => ({
         title: n.title,
-        summary: n.body, // المحتوى الكامل للتحليل
+        summary: n.body,
         url: n.url
       }));
     }
   } catch (e) {
-    LOG_E('أخبار', 'فشل جلب الأخبار المفصلة، سنعتمد على تحليل الأرقام فقط.');
+    LOG_E('أخبار', 'فشل جلب الأخبار، سنعتمد على تحليل حركة السيولة.');
   }
   return null;
 }
 
 /**
- * 3. توليد المحتوى باستخدام Groq بناءً على البيانات والأخبار
+ * 3. توليد المحتوى الاحترافي باستخدام Groq (Alpha Hunter Mode)
  */
 async function generateAIContent(marketData, news) {
   if (!marketData) return null;
 
-  // تعريف أنماط النشر لكسر الجمود والتكرار
-  const patterns = [
-    "تحليل 'خريطة السيولة': ركز على أحجام التداول (Volume) والزخم الحالي.",
-    "رادار 'العملات البديلة والميم': قارن أداء $BTC مع $PEPE و $DOGE.",
-    "تحديث 'القمة والقاع': اذكر مستويات الدعم والمقاومة بناءً على High و Low اليوم.",
-    "تقرير 'الحدث والسعر': اربط الأخبار المفصلة بحركة السعر الحالية (إذا توفرت)."
-  ];
-  const pattern = patterns[Math.floor(Math.random() * patterns.length)];
-
-  const prompt = `أنت محلل أسواق محترف وصانع محتوى على Binance Square في أبريل 2026.
+  const prompt = `أنت خبير "Alpha Hunter" ومحلل تقني رائد على Binance Square في أبريل 2026.
   
-  بيانات السوق (حقيقية): ${JSON.stringify(marketData)}
-  أخبار مفصلة (حقيقية): ${news ? JSON.stringify(news) : "لا توجد أخبار، ركز على السعر."}
+  بيانات الرادار اللحظية: ${JSON.stringify(marketData)}
+  أخبار السوق العاجلة: ${news ? JSON.stringify(news) : "لا توجد أخبار، ركز على انفجار السيولة وحركة السعر."}
   
   المطلوب:
-  1. النمط: ${pattern}
-  2. التنسيق: استخدم إيموجي (🚀, 📉, 🔥)، فقرات قصيرة، و Cashtags مثل $BTC.
-  3. المحتوى: ادمج الخبر مع السعر بذكاء. إذا كان الخبر إيجابياً والسعر صاعد، حلل السبب.
-  4. ممنوع النجوم (***). ممنوع إخلاء المسؤولية التقليدي (بينانس تضيفه).
-  5. بدلاً من الإخلاء، أضف "إشارة فنية" أو "رادار التوقع".
-  6. اللغة: عربية احترافية، جذابة، ومحينة.`;
+  1. ركز على العملات البديلة (Altcoins) التي تظهر في البيانات وسعرها أقل من 1 دولار كفرص "Alpha" مبكرة.
+  2. حلل العلاقة بين حركة $BTC وشهية المخاطرة في العملات الرائجة المذكورة.
+  3. التنسيق: استخدم Cashtags (مثل $SOL)، فقرات جذابة، وإيموجي احترافي (🔥, 📊, 🚀).
+  4. أسلوب الكتابة: حماسي، تقني، ومباشر. سلط الضوء على العملة التي تملك أعلى "Volume" أو أكبر "Change".
+  5. ممنوع تماماً استخدام النجوم (***) أو إخلاء المسؤولية.
+  6. الخاتمة: رادار التوقع لاتجاه السوق في الساعات القادمة.
+  
+  اللغة: عربية فصحى عصرية قوية.`;
 
   try {
-    LOG('Groq', `بدء المعالجة بنمط: ${pattern}`);
+    LOG('AI', 'جاري صياغة التقرير الفني عبر Groq...');
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
         model: CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.5 // درجة منخفضة لضمان الدقة الرقمية
+        temperature: 0.6
       },
       { headers: { 'Authorization': `Bearer ${CONFIG.GROQ_KEY}`, 'Content-Type': 'application/json' } }
     );
@@ -110,42 +115,44 @@ async function generateAIContent(marketData, news) {
     let text = response.data?.choices?.[0]?.message?.content;
     return text.replace(/\*/g, '').trim();
   } catch (e) {
-    LOG_E('Groq', `فشل التوليد: ${e.message}`);
+    LOG_E('AI', `فشل توليد المحتوى: ${e.message}`);
   }
   return null;
 }
 
 /**
- * 4. نشر المحتوى النهائي على Binance Square
+ * 4. النشر التلقائي على Binance Square
  */
 async function publishToBinance(content) {
   try {
-    LOG('نشر', 'إرسال المنشور إلى Binance Square...');
+    LOG('نشر', 'إرسال المقال إلى Binance Square OpenAPI...');
     await axios.post(
       'https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add',
       { bodyTextOnly: content },
       { headers: { 'X-Square-OpenAPI-Key': CONFIG.BINANCE_KEY } }
     );
-    LOG('نشر', '🎉 تم النشر بنجاح! محتوى حقيقي، محين، وغير مكرر.');
+    LOG('نشر', '✅ تم النشر بنجاح! رادار Alpha يعمل بكفاءة.');
   } catch (e) {
     LOG_E('نشر', `فشل النشر: ${e.message}`);
   }
 }
 
 /**
- * التشغيل الرئيسي
+ * الدورة التشغيلية
  */
 async function run() {
-  console.log(`--- دورة العمل: ${new Date().toLocaleString()} ---`);
+  console.log(`\n--- تحديث الرادار: ${new Date().toLocaleString()} ---`);
   
   const market = await getMarketData();
   const news = await getDetailedNews();
   
-  if (market) {
+  if (market && market.length > 0) {
     const post = await generateAIContent(market, news);
-    if (post) await publishToBinance(post);
+    if (post) {
+      await publishToBinance(post);
+    }
   } else {
-    LOG_E('نظام', 'تعذر جلب بيانات السوق، تم إيقاف الدورة للمصداقية.');
+    LOG_E('نظام', 'فشل الرادار في العثور على بيانات كافية، تم إلغاء الدورة.');
   }
 }
 
