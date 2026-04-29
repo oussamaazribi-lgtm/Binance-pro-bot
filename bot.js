@@ -8,7 +8,7 @@ const CONFIG = {
   BINANCE_KEY: process.env.BINANCE_KEY,
   GROQ_KEY: process.env.GROQ_API_KEY,
   MODEL: 'llama-3.3-70b-versatile',
-  // قائمة موسعة تضم القيادية + الميم + العملات الرخيصة الرائجة (Alpha) لتفادي حظر 451
+  // قائمة العملات المختارة (القيادية + الميم + Alpha)
   SYMBOLS: [
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 
     'PEPEUSDT', 'DOGEUSDT', 'SHIBUSDT', 'FLOKIUSDT', 'BONKUSDT', 
@@ -22,61 +22,69 @@ const LOG = (step, msg) => console.log(`[${step}] ${msg}`);
 const LOG_E = (step, msg) => console.error(`[${step}] ❌ ${msg}`);
 
 /**
- * 1. جلب بيانات السوق الحقيقية (طريقة الطلب المحدد لتجنب الحظر الجغرافي)
+ * 1. رادار السوق: جلب البيانات عبر روابط بديلة لتجاوز الحظر الجغرافي 451
  */
 async function getMarketData() {
-  const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(CONFIG.SYMBOLS)}`;
+  const symbolsParam = JSON.stringify(CONFIG.SYMBOLS);
+  
+  // مصفوفة روابط بديلة تتجنب حظر نطاق binance.com الرئيسي في أمريكا
+  const endpoints = [
+    `https://data-api.binance.vision/api/v3/ticker/24hr?symbols=${symbolsParam}`,
+    `https://api.binance.us/api/v3/ticker/24hr?symbols=${symbolsParam}`,
+    `https://api1.binance.com/api/v3/ticker/24hr?symbols=${symbolsParam}`
+  ];
 
-  try {
-    LOG('رادار', 'جاري جلب بيانات العملات المختارة (القيادية + Alpha)...');
-    const res = await axios.get(url, { timeout: 10000 });
-    const data = res.data;
-
-    if (data && Array.isArray(data)) {
-      return data.map(d => ({
-        symbol: d.symbol.replace('USDT', ''),
-        price: parseFloat(d.lastPrice) < 0.001 ? d.lastPrice : parseFloat(d.lastPrice).toLocaleString('en-US'),
-        change: parseFloat(d.priceChangePercent).toFixed(2),
-        volume: (parseFloat(d.quoteVolume) / 1000000).toFixed(2) + 'M',
-        isAlpha: parseFloat(d.lastPrice) < 1.0,
-        high: parseFloat(d.highPrice).toLocaleString(),
-        low: parseFloat(d.lowPrice).toLocaleString()
-      }));
-    }
-  } catch (e) {
-    LOG_E('رادار', `فشل الجلب من الرابط الرئيسي: ${e.message}`);
-    // محاولة أخيرة عبر رابط بديل
+  for (let url of endpoints) {
     try {
-        const fallbackUrl = `https://api3.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(CONFIG.SYMBOLS)}`;
-        const res = await axios.get(fallbackUrl);
-        return res.data.map(d => ({ symbol: d.symbol.replace('USDT', ''), price: d.lastPrice, change: d.priceChangePercent }));
-    } catch (e2) { return null; }
+      LOG('رادار', `محاولة جلب البيانات من: ${url.split('/')[2]}...`);
+      const res = await axios.get(url, { 
+        timeout: 15000,
+        headers: { 'User-Agent': 'Mozilla/5.0' } 
+      });
+      
+      if (res.data && Array.isArray(res.data)) {
+        LOG('رادار', '✅ تم جلب البيانات بنجاح من الرابط البديل!');
+        return res.data.map(d => ({
+          symbol: d.symbol.replace('USDT', ''),
+          price: parseFloat(d.lastPrice) < 0.001 ? d.lastPrice : parseFloat(d.lastPrice).toLocaleString('en-US'),
+          change: parseFloat(d.priceChangePercent).toFixed(2),
+          volume: (parseFloat(d.quoteVolume) / 1000000).toFixed(2) + 'M',
+          isAlpha: parseFloat(d.lastPrice) < 1.0,
+          high: parseFloat(d.highPrice).toLocaleString(),
+          low: parseFloat(d.lowPrice).toLocaleString()
+        }));
+      }
+    } catch (e) {
+      LOG_E('رادار', `فشل الرابط ${url.split('/')[2]}: ${e.message}`);
+      continue; 
+    }
   }
   return null;
 }
 
 /**
- * 2. جلب أخبار حقيقية مفصلة
+ * 2. جلب مستجدات السوق
  */
 async function getDetailedNews() {
   try {
     LOG('أخبار', 'سحب آخر مستجدات السوق...');
+    // استخدام رابط مباشر ومبسط للأخبار
     const res = await axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN', { timeout: 10000 });
     
     if (res.data && res.data.Data) {
       return res.data.Data.slice(0, 3).map(n => ({
         title: n.title,
-        summary: n.body
+        summary: n.body.substring(0, 300) // تقليل الحجم لضمان سرعة المعالجة
       }));
     }
   } catch (e) {
-    LOG_E('أخبار', 'فشل جلب الأخبار، سنعتمد على تحليل حركة السيولة.');
+    LOG_E('أخبار', 'فشل جلب الأخبار، الاعتماد على تحليل السيولة فقط.');
   }
   return null;
 }
 
 /**
- * 3. توليد المحتوى الاحترافي باستخدام Groq (Alpha Hunter Mode)
+ * 3. توليد المحتوى الاحترافي (Alpha Hunter Mode)
  */
 async function generateAIContent(marketData, news) {
   if (!marketData) return null;
@@ -84,13 +92,13 @@ async function generateAIContent(marketData, news) {
   const prompt = `أنت خبير "Alpha Hunter" ومحلل تقني رائد على Binance Square في أبريل 2026.
   
   بيانات الرادار اللحظية: ${JSON.stringify(marketData)}
-  أخبار السوق: ${news ? JSON.stringify(news) : "لا توجد أخبار عاجلة، ركز على انفجار السيولة وحركة السعر."}
+  أخبار السوق: ${news ? JSON.stringify(news) : "ركز على انفجار السيولة وحركة السعر."}
   
   المطلوب:
   1. حلل أداء العملات البديلة (Altcoins) المذكورة، خاصة تلك التي سعرها أقل من 1 دولار ووصفها كفرص "Alpha".
   2. اربط حركة البيتكوين $BTC بالنشاط الموجود في العملات الرائجة.
   3. التنسيق: استخدم Cashtags (مثل $SOL)، فقرات جذابة، وإيموجي احترافي (🔥, 📊, 🚀).
-  4. ممنوع النجوم (***) أو إخلاء المسؤولية التقليدي.
+  4. ممنوع النجوم (***) أو إخلاء المسؤولية.
   5. الخاتمة: رادار التوقع لاتجاه السوق القادم.
   
   اللغة: عربية فصحى عصرية وقوية.`;
@@ -133,10 +141,10 @@ async function publishToBinance(content) {
 }
 
 /**
- * التشغيل الرئيسي
+ * الدورة التشغيلية
  */
 async function run() {
-  console.log(`\n--- دورة الرادار: ${new Date().toLocaleString()} ---`);
+  console.log(`\n--- دورة الرادار المحسنة: ${new Date().toLocaleString()} ---`);
   
   const market = await getMarketData();
   const news = await getDetailedNews();
@@ -145,7 +153,7 @@ async function run() {
     const post = await generateAIContent(market, news);
     if (post) await publishToBinance(post);
   } else {
-    LOG_E('نظام', 'تعذر جلب بيانات السوق، تم إيقاف الدورة للمصداقية.');
+    LOG_E('نظام', 'تعذر جلب البيانات النهائية، تم إيقاف الدورة.');
   }
 }
 
