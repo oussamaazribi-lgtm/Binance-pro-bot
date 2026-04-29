@@ -6,142 +6,111 @@ try { dotenv.config(); } catch(e) {}
 const CONFIG = {
   BINANCE_KEY: process.env.BINANCE_KEY,
   GROQ_KEY: process.env.GROQ_API_KEY,
-  MODEL: 'llama-3.3-70b-versatile',
-  SYMBOLS: [
-    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'PEPEUSDT', 
-    'DOGEUSDT', 'SHIBUSDT', 'BONKUSDT', 'GALAUSDT', 'FETUSDT', 
-    'LUNCUSDT', 'NOTUSDT', 'WIFUSDT', 'JUPUSDT', 'FLOKIUSDT'
-  ]
+  MODEL: 'llama-3.3-70b-versatile'
 };
 
 const LOG = (step, msg) => console.log(`[${step}] ${msg}`);
 const LOG_E = (step, msg) => console.error(`[${step}] ❌ ${msg}`);
 
 /**
- * 1. جلب بيانات السوق
+ * 1. رادار الـ Alpha: جلب العملات الأكثر صعوداً وزخماً (Top Gainers)
  */
-async function getMarketData() {
-  LOG('سوق', 'رصد السيولة والأسعار...');
-  const results = [];
-  const requests = CONFIG.SYMBOLS.map(symbol => {
-    const url = `https://api.binance.us/api/v3/ticker/24hr?symbol=${symbol}`;
-    return axios.get(url, { timeout: 8000 }).catch(() => null);
-  });
-  const responses = await Promise.all(requests);
-  for (const res of responses) {
-    if (res && res.data) {
-      const d = res.data;
-      results.push({
-        symbol: d.symbol.replace('USDT', ''),
-        price: parseFloat(d.lastPrice) < 0.001 ? d.lastPrice : parseFloat(d.lastPrice).toLocaleString('en-US'),
-        change: parseFloat(d.priceChangePercent).toFixed(2),
-        volume: (parseFloat(d.quoteVolume) / 1000000).toFixed(2) + 'M',
-        isAlpha: parseFloat(d.lastPrice) < 1.0
-      });
-    }
+async function getAlphaList() {
+  try {
+    LOG('رادار', 'جاري مسح السوق لاصطياد عملات الـ Alpha...');
+    const res = await axios.get('https://api.binance.us/api/v3/ticker/24hr');
+    
+    // فلترة العملات التي تحقق أعلى صعود (Top Gainers) لمحاكاة قائمة Alpha
+    const alphaCandidates = res.data
+      .filter(d => d.symbol.endsWith('USDT'))
+      .sort((a, b) => parseFloat(b.priceChangePercent) - parseFloat(a.priceChangePercent))
+      .slice(0, 8); // نأخذ أفضل 8 عملات متفجرة
+
+    return alphaCandidates.map(d => ({
+      symbol: d.symbol.replace('USDT', ''),
+      change: parseFloat(d.priceChangePercent).toFixed(2),
+      price: d.lastPrice,
+      volume: (parseFloat(d.quoteVolume) / 1000000).toFixed(2) + 'M'
+    }));
+  } catch (e) {
+    LOG_E('رادار', 'فشل مسح السوق.');
+    return null;
   }
-  return results;
 }
 
 /**
- * 2. حل مشكلة الأخبار (إصدار الحماية القصوى)
+ * 2. جلب الأخبار (جوجل RSS - مستقر جداً)
  */
-async function getDetailedNews() {
-  // استخدام وكيل (Proxy) بسيط أو روابط RSS مفتوحة
-  const backupSources = [
-    'https://cryptopanic.com/api/v1/posts/?kind=news&public=true', // مصدر مفتوح جزئياً
-    'https://min-api.cryptocompare.com/data/v2/news/?lang=EN'
-  ];
-
-  for (const url of backupSources) {
-    try {
-      LOG('أخبار', `جلب المستجدات من ${url.includes('cryptopanic') ? 'CryptoPanic' : 'CryptoCompare'}...`);
-      const res = await axios.get(url, { 
-        timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-      });
-      
-      const data = res.data?.Data || res.data?.results;
-      if (data && data.length > 0) {
-        LOG('أخبار', '✅ تم الاتصال بمصدر الأخبار!');
-        return data.slice(0, 3).map(n => ({ title: n.title, summary: (n.body || n.metadata?.description || "").substring(0, 200) }));
-      }
-    } catch (e) {
-      continue;
-    }
-  }
-
-  LOG_E('أخبار', 'تم حظر طلبات الأخبار من الخادم الحالي؛ تفعيل المحلل الداخلي.');
-  return null;
+async function getMarketNews() {
+  try {
+    const url = `https://news.google.com/rss/search?q=crypto+market+trending+when:12h&hl=en-US&gl=US&ceid=US:en`;
+    const res = await axios.get(url, { timeout: 10000 });
+    const titles = res.data.match(/<title>(.*?)<\/title>/g) || [];
+    return titles.slice(1, 4).map(t => t.replace(/<\/?title>/g, ''));
+  } catch (e) { return null; }
 }
 
 /**
- * 3. صياغة المحتوى (الأسلوب البشري المتغير)
+ * 3. صياغة المحتوى (بشري، متغير، ومنطقي لقائمة Alpha)
  */
-async function generateAIContent(marketData, news) {
-  if (!marketData) return null;
+async function generateAIContent(alphaData, news) {
+  if (!alphaData) return null;
 
-  const styles = [
-    "محلل متمرد يكره التقليد ويركز على صيد الـ Alpha.",
-    "خبير استراتيجي هادئ يحلل حركة الحيتان والسيولة.",
-    "متداول يومي سريع يتحدث بلغة الأرقام والفرص العاجلة.",
-    "صديق مقرب ينصح المتابعين بأهم التحركات اللحظية."
+  const personalities = [
+    "قناص فرص رقمي يراقب شاشات التداول لحظة بلحظة.",
+    "محلل حيتان يركز على السيولة التي تضخ في عملات الـ Alpha.",
+    "متداول محترف يشارك 'السبق' مع متابعيه بأسلوب سريع."
   ];
-  const randomStyle = styles[Math.floor(Math.random() * styles.length)];
+  const selectedStyle = personalities[Math.floor(Math.random() * personalities.length)];
 
-  const prompt = `أنت محلل كريبتو بشري محترف على Binance Square. 
-  البيانات: ${JSON.stringify(marketData)}
-  الأخبار: ${news ? JSON.stringify(news) : "لا توجد أخبار خارجية؛ اعتمد كلياً على تحليل الأسعار والسيولة اللحظية واستنتج اتجاه السوق بنفسك."}
+  const prompt = `أنت محلل بشري محترف على Binance Square. مهمتك تحليل قائمة الـ "Alpha" الحالية.
+  البيانات المتفجرة الآن: ${JSON.stringify(alphaData)}
+  أخبار السوق: ${news ? JSON.stringify(news) : "تركيز كامل على حركة السعر والسيولة."}
   
   المطلوب:
-  1. تقمص شخصية [${randomStyle}]. ابدأ المنشور بطريقة مختلفة تماماً عن المرة السابقة (سؤال عاجل، ملاحظة ساخرة، أو تحليل تقني).
-  2. لا تكرر القوالب. تحدث عن $BTC ثم انتقل لعملات الـ Alpha (تحت 1 دولار).
-  3. إذا لم تتوفر أخبار، ابدأ بـ "بعيداً عن ضجيج الأخبار، الأرقام اليوم تخبرنا بـ..." أو "السيولة هي الخبر الوحيد الذي يهمنا الآن...".
-  4. التنسيق: Cashtags، إيموجي، فقرات غير منتظمة، بدون نجوم (***).
-  5. اللغة: عربية فصحى بيضاء طبيعية.`;
+  1. الشخصية: [${selectedStyle}]. لا تكرر نفسك أبداً. ابدأ بأسلوب مختلف (مثلاً: ملاحظة عن عملة محددة، أو حالة السوق العامة).
+  2. منطق الـ Alpha: حلل لماذا هذه العملات تتصدر المشهد؟ (زخم، سيولة مفاجئة، صعود صاروخي).
+  3. التنسيق: استخدم Cashtags (مثل $RLS)، إيموجي الرادار 🔥 والبرق ⚡، فقرات قصيرة جداً سريعة القراءة.
+  4. اللغة: عربية فصحى بيضاء طبيعية. ممنوع النجوم (***).
+  5. اجعل القارئ يشعر أنك "تكتب الآن" بناءً على ما تراه في الشاشة.`;
 
   try {
-    LOG('AI', `التوليد بأسلوب: ${randomStyle}`);
+    LOG('AI', `صياغة التقرير بأسلوب: ${selectedStyle}`);
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
         model: CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.95 // رفع الإبداع لأقصى درجة
+        temperature: 0.9
       },
       { headers: { 'Authorization': `Bearer ${CONFIG.GROQ_KEY}`, 'Content-Type': 'application/json' } }
     );
     return response.data?.choices?.[0]?.message?.content?.replace(/\*/g, '').trim();
-  } catch (e) {
-    LOG_E('AI', 'فشل التوليد.');
-  }
-  return null;
+  } catch (e) { return null; }
 }
 
 /**
  * 4. النشر
  */
-async function publishToBinance(content) {
+async function publish(content) {
   try {
-    LOG('نشر', 'إرسال المقال إلى Binance Square...');
+    LOG('نشر', 'إرسال إلى Binance Square...');
     await axios.post(
       'https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add',
-      { title: "رادار Alpha اللحظي 🚀", content: content, type: "ARTICLE", language: "ar" },
+      { title: "رادار Alpha: انفجار السيولة والعملات المتصدرة 🚀", content: content, type: "ARTICLE", language: "ar" },
       { headers: { 'X-Square-OpenAPI-Key': CONFIG.BINANCE_KEY, 'Content-Type': 'application/json' } }
     );
-    LOG('نشر', '✅ تم النشر بنجاح بأسلوب بشري متجدد.');
-  } catch (e) {
-    LOG_E('نشر', `فشل النشر: ${e.response?.data?.message || e.message}`);
-  }
+    LOG('نشر', '✅ تم النشر بنجاح!');
+  } catch (e) { LOG_E('نشر', 'فشل النشر.'); }
 }
 
 async function run() {
-  console.log(`\n--- دورة Binance Square: ${new Date().toLocaleString()} ---`);
-  const market = await getMarketData();
-  const news = await getDetailedNews();
-  if (market) {
-    const post = await generateAIContent(market, news);
-    if (post) await publishToBinance(post);
+  console.log(`\n--- دورة Alpha الذكية: ${new Date().toLocaleString()} ---`);
+  const alpha = await getAlphaList();
+  const news = await getMarketNews();
+  if (alpha) {
+    const post = await generateAIContent(alpha, news);
+    if (post) await publish(post);
   }
 }
 
