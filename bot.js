@@ -23,7 +23,7 @@ async function getAlphaList() {
 }
 
 async function generateAIContent(alphaPair) {
-  const prompt = `أنت متداول كريبتو خبير. اكتب نصاً قصيراً (بحدود 200 حرف) حول: ${JSON.stringify(alphaPair)}. القواعد: عربي فصحى فقط، بدون لغات أجنبية، أسلوب شخصي، استخدم Cashtags فقط، لا نجوم، لا روابط.`;
+  const prompt = `أنت متداول كريبتو خبير. اكتب نصاً قصيراً جداً (فقرتين فقط) حول: ${JSON.stringify(alphaPair)}. القواعد: عربي فصحى فقط، بدون أي لغات أجنبية، أسلوب شخصي، استخدم Cashtags فقط، لا نجوم، لا روابط.`;
   try {
     const res = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
       model: CONFIG.MODEL,
@@ -36,10 +36,13 @@ async function generateAIContent(alphaPair) {
 
 async function publishToBinance(content) {
   try {
+    // تنسيق HTML بسيط جداً كما تتطلبه بينانس
+    const cleanContent = `<p>${content.replace(/\n/g, '</p><p>')}</p>`;
+    
+    // Payload "نظيف" بدون حقول إضافية (تجنب الرفض بسبب الحقول غير المدعومة)
     const payload = {
-      title: "نظرة على السوق 🚀",
-      content: content,
-      body: content, 
+      title: `نظرة على السوق ${new Date().toLocaleTimeString('ar-EG')}`,
+      content: cleanContent,
       type: "ARTICLE",
       language: "AR"
     };
@@ -50,18 +53,17 @@ async function publishToBinance(content) {
       { 
         headers: { 
           'X-Square-OpenAPI-Key': CONFIG.BINANCE_KEY,
-          'Content-Type': 'application/json',
-          'Origin': 'https://www.binance.com',
-          'Referer': 'https://www.binance.com/'
+          'Content-Type': 'application/json'
         } 
       }
     );
 
-    if (res.data.success) return true;
-    console.log('خطأ من بينانس:', JSON.stringify(res.data));
+    if (res.data && res.data.success) return true;
+    
+    console.error('فشل النشر - رد الخادم:', JSON.stringify(res.data));
     return false;
   } catch (e) {
-    console.log('خطأ في الاتصال:', e.response?.data?.message || e.message);
+    console.error('خطأ في الاتصال:', e.response?.data?.message || e.message);
     return false;
   }
 }
@@ -69,14 +71,13 @@ async function publishToBinance(content) {
 async function run() {
   const alpha = await getAlphaList();
   if (!alpha) return;
-  for (let i = 0; i < alpha.length; i += 2) {
-    const content = await generateAIContent(alpha.slice(i, i + 2));
-    if (content) {
-      LOG('نشر', `جاري المحاولة...`);
-      const success = await publishToBinance(content);
-      if (success) LOG('نشر', '✅ نجاح.');
-      await new Promise(r => setTimeout(r, 10000));
-    }
+  
+  // نشر مقال واحد فقط يحتوي على العملات لتجنب تقييد الـ Rate Limit
+  const content = await generateAIContent(alpha);
+  if (content) {
+    LOG('نشر', 'جاري إرسال المقال...');
+    const success = await publishToBinance(content);
+    if (success) LOG('نشر', '✅ تم النشر بنجاح.');
   }
 }
 
