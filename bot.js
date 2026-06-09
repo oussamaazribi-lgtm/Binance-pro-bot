@@ -9,19 +9,25 @@ const CONFIG = {
 };
 
 async function publishToBinanceSquare(content) {
-  // 🔑 المفتاح يرسل كـ query parameter وليس header!
-  const url = `https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add?openApiKey=${CONFIG.SQUARE_API_KEY}`;
+  // 🔑 نفس الطريقة بالضبط من الكود العامل
+  const headers = {
+    'X-Square-OpenAPI-Key': CONFIG.SQUARE_API_KEY,
+    'Content-Type': 'application/json',
+    'clienttype': 'binanceSkill'  // هذا مهم جداً!
+  };
   
   const payload = {
-    bodyTextOnly: content
+    bodyTextOnly: content  // لاحظ bodyTextOnly وليس content
   };
   
   try {
-    const response = await axios.post(url, payload, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
+    console.log('📡 جاري الإرسال إلى Binance Square...');
+    
+    const response = await axios.post(
+      'https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add',
+      payload,
+      { headers: headers }
+    );
     
     console.log('📡 رد الخادم:', JSON.stringify(response.data));
     
@@ -33,7 +39,7 @@ async function publishToBinanceSquare(content) {
       return false;
     }
   } catch (error) {
-    console.error('❌ خطأ:', error.response?.data || error.message);
+    console.error('❌ خطأ في الاتصال:', error.response?.data || error.message);
     return false;
   }
 }
@@ -51,7 +57,9 @@ async function generateAIContent(alphaPair) {
       headers: { 'Authorization': `Bearer ${CONFIG.GROQ_KEY}` } 
     });
     
-    return res.data.choices[0].message.content.replace(/\*/g, '').trim();
+    let content = res.data.choices[0].message.content;
+    content = content.replace(/\*/g, '').trim();
+    return content;
   } catch (e) { 
     console.error('Groq error:', e.message);
     return null; 
@@ -67,6 +75,7 @@ async function getAlphaList() {
       .slice(0, 4)
       .map(d => ({ symbol: d.symbol.replace('USDT', ''), change: parseFloat(d.priceChangePercent).toFixed(2) }));
   } catch (e) { 
+    console.error('Binance error:', e.message);
     return null; 
   }
 }
@@ -82,13 +91,15 @@ async function run() {
   
   console.log('📊 العملات:', alpha.map(c => `${c.symbol} (${c.change}%)`).join(', '));
   
+  console.log('🤖 جاري توليد المحتوى...');
   const content = await generateAIContent(alpha);
   if (!content) {
     console.log('❌ فشل توليد المحتوى');
     return;
   }
   
-  console.log('📝 المحتوى:', content.substring(0, 200) + '...');
+  console.log('📝 المحتوى:', content.substring(0, 150) + '...');
+  console.log('📏 طول المحتوى:', content.length, 'حرف');
   
   await publishToBinanceSquare(content);
 }
