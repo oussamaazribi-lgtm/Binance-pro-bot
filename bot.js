@@ -3,28 +3,27 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const CONFIG = {
-  SQUARE_API_KEY: process.env.BINANCE_SQUARE_KEY,  // نفس المفتاح
+  SQUARE_API_KEY: process.env.BINANCE_SQUARE_KEY,
   GROQ_KEY: process.env.GROQ_API_KEY,
   MODEL: 'llama-3.3-70b-versatile'
 };
 
 async function publishToBinanceSquare(content) {
-  const headers = {
-    'X-Square-OpenAPI-Key': CONFIG.SQUARE_API_KEY,
-    'Content-Type': 'application/json',
-    'clienttype': 'binanceSkill'  // 🔑 هذا هو المفتاح السري
-  };
+  // 🔑 المفتاح يرسل كـ query parameter وليس header!
+  const url = `https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add?openApiKey=${CONFIG.SQUARE_API_KEY}`;
   
   const payload = {
-    bodyTextOnly: content  // النشر كنص فقط بدون تنسيق
+    bodyTextOnly: content
   };
   
   try {
-    const response = await axios.post(
-      'https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add',
-      payload,
-      { headers: headers }
-    );
+    const response = await axios.post(url, payload, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log('📡 رد الخادم:', JSON.stringify(response.data));
     
     if (response.data?.code === '000000') {
       console.log('✅ تم النشر بنجاح على Binance Square!');
@@ -34,7 +33,7 @@ async function publishToBinanceSquare(content) {
       return false;
     }
   } catch (error) {
-    console.error('❌ خطأ في الاتصال:', error.response?.data || error.message);
+    console.error('❌ خطأ:', error.response?.data || error.message);
     return false;
   }
 }
@@ -54,6 +53,7 @@ async function generateAIContent(alphaPair) {
     
     return res.data.choices[0].message.content.replace(/\*/g, '').trim();
   } catch (e) { 
+    console.error('Groq error:', e.message);
     return null; 
   }
 }
