@@ -13,16 +13,16 @@ const LOG = (step, msg) => console.log(`[${step}] ${msg}`);
 const LOG_E = (step, msg) => console.error(`[${step}] ❌ ${msg}`);
 
 /**
- * 1. جلب قائمة الـ Alpha (أعلى 5 عملات صعوداً)
+ * 1. جلب قائمة الـ Alpha (أعلى العملات صعوداً)
  */
 async function getAlphaList() {
   try {
     LOG('سوق', 'جاري رصد قائمة الصدارة (Alpha)...');
-    const res = await axios.get('https://binance.us');
+    const res = await axios.get('https://api.binance.us/api/v3/ticker/24hr');
     const alphaCandidates = res.data
       .filter(d => d.symbol.endsWith('USDT'))
       .sort((a, b) => parseFloat(b.priceChangePercent) - parseFloat(a.priceChangePercent))
-      .slice(0, 5); // جلب 5 عملات كحد أقصى
+      .slice(0, 7);
 
     return alphaCandidates.map(d => ({
       symbol: d.symbol.replace('USDT', ''),
@@ -33,19 +33,19 @@ async function getAlphaList() {
 }
 
 /**
- * 2. توليد المحتوى (أسلوب بشري متنوع + إضافة 5 هاشتاغات)
+ * 2. توليد المحتوى (أسلوب بشري متنوع)
  */
 async function generateAIContent(alphaData) {
   if (!alphaData) return null;
   
   const prompt = `أنت محلل كريبتو بشري محترف تنشر على Binance Square. 
   حلل قائمة الـ Alpha الحالية: ${JSON.stringify(alphaData)}. 
-  المطلوب: مقال جذاب، استخدام Cashtags ($BTC) للعملات المذكورة فقط، بدون نجوم (***)، وبأسلوب بشري غير مكرر.`;
+  المطلوب: مقال جذاب، استخدام Cashtags ($BTC)، بدون نجوم (***)، وبأسلوب بشري غير مكرر.`;
 
   try {
     LOG('AI', 'جاري صياغة المحتوى...');
     const response = await axios.post(
-      'https://groq.com',
+      'https://api.groq.com/openai/v1/chat/completions',
       {
         model: CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
@@ -53,21 +53,13 @@ async function generateAIContent(alphaData) {
       },
       { headers: { 'Authorization': `Bearer ${CONFIG.GROQ_KEY}`, 'Content-Type': 'application/json' } }
     );
-    
-    let content = response.data?.choices?.[0]?.message?.content?.replace(/\*/g, '').trim();
-    
-    if (content) {
-      // 🌟 إضافة 5 هاشتاغات قوية في نهاية المنشور لزيادة التفاعل
-      const hashtags = "\n\n#Crypto #BinanceSquare #Trading #Bitcoin #Altcoins";
-      content += hashtags;
-    }
-    
+    const content = response.data?.choices?.[0]?.message?.content?.replace(/\*/g, '').trim();
     return content || null;
   } catch (e) { return null; }
 }
 
 /**
- * 3. النشر إلى منصة Binance Square
+ * 3. النشر (الإصلاح الجذري لحقول البيانات)
  */
 async function publishToBinance(content) {
   if (!content) {
@@ -78,16 +70,17 @@ async function publishToBinance(content) {
   try {
     LOG('نشر', 'إرسال البيانات إلى Binance Square...');
     
+    // إرسال المحتوى في كلاً من الحقلين لضمان القبول حسب نوع الـ API المتاح لك
     const payload = {
       title: "رادار Alpha: تحليل قائمة الصدارة والزخم اللحظي 🚀",
-      content: content,           
-      bodyTextOnly: content,      
+      content: content,           // الحقل الأساسي للمقالات
+      bodyTextOnly: content,      // الحقل الأساسي للمنشورات السريعة
       type: "ARTICLE",
       language: "ar"
     };
 
     const res = await axios.post(
-      'https://binance.com',
+      'https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add',
       payload,
       { 
         headers: { 
@@ -101,6 +94,7 @@ async function publishToBinance(content) {
       LOG('نشر', `✅ تم النشر بنجاح! ID: ${JSON.stringify(res.data.data)}`);
     } else {
       LOG_E('نشر', `فشل النشر: ${res.data.message}`);
+      // طباعة الرد للتأكد من سبب الفشل إذا استمر
       console.log('رد الخادم:', JSON.stringify(res.data));
     }
   } catch (e) {
