@@ -1,17 +1,16 @@
 const axios = require('axios');
 const dotenv = require('dotenv');
 
-try { dotenv.config(); } catch(e) {}
+dotenv.config();
 
 const CONFIG = {
-  BINANCE_SQUARE_KEY: process.env.BINANCE_SQUARE_KEY, // مفتاح النشر على Binance Square
+  BINANCE_SQUARE_KEY: process.env.BINANCE_SQUARE_KEY, // المفتاح الوحيد
   GROQ_KEY: process.env.GROQ_API_KEY,
   MODEL: 'llama-3.3-70b-versatile'
 };
 
 const LOG = (step, msg) => console.log(`[${step}] ${msg}`);
 
-// جلب أفضل 4 عملات من Binance
 async function getAlphaList() {
   try {
     const res = await axios.get('https://api.binance.us/api/v3/ticker/24hr');
@@ -24,22 +23,14 @@ async function getAlphaList() {
         change: parseFloat(d.priceChangePercent).toFixed(2) 
       }));
   } catch (e) { 
-    LOG('خطأ', 'فشل جلب البيانات من Binance');
+    LOG('خطأ', 'فشل جلب البيانات');
     return null; 
   }
 }
 
-// توليد المحتوى باستخدام Groq
 async function generateAIContent(alphaPair) {
-  const prompt = `اكتب تحليل فني قصير جداً (فقرتين فقط) لهذه العملات: ${JSON.stringify(alphaPair)}. 
-  
-المتطلبات:
-- اللغة: عربية فصحى
-- الأسلوب: مهني وتحفيزي
-- أضف علامة الدولار قبل كل رمز عملة (مثال: $BTC, $ETH)
-- لا تستخدم نجوم * أو علامات ترقيم زائدة
-- لا تذكر أسعار محددة، فقط نسب التغير
-- انهي بنصيحة استثمارية قصيرة`;
+  const prompt = `اكتب تحليل فني قصير (فقرتين) لهذه العملات: ${JSON.stringify(alphaPair)}. 
+استخدم علامة $ قبل كل رمز. عربي فصحى فقط. انه بنصيحة استثمارية.`;
 
   try {
     const res = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
@@ -54,47 +45,41 @@ async function generateAIContent(alphaPair) {
       } 
     });
     
-    let content = res.data.choices[0].message.content;
-    content = content.replace(/\*/g, '').trim();
-    return content;
+    return res.data.choices[0].message.content.replace(/\*/g, '').trim();
   } catch (e) { 
-    LOG('خطأ', 'فشل توليد المحتوى من Groq');
+    LOG('خطأ', 'فشل توليد المحتوى');
     return null; 
   }
 }
 
-// النشر على Binance Square
 async function publishToBinanceSquare(content) {
   try {
-    const title = `📊 تحليل السوق ${new Date().toLocaleDateString('ar-EG')}`;
-    
     const payload = {
-      title: title,
+      title: `📊 تحليل السوق ${new Date().toLocaleDateString('ar-EG')}`,
       content: content,
       contentType: "ORIGINAL",
-      language: "ar",
-      tags: ["تحليل فني", "عملات رقمية", "تداول"]
+      language: "ar"
     };
 
-    LOG('نشر', 'جاري إرسال المقال إلى Binance Square...');
+    LOG('نشر', 'جاري إرسال المقال...');
     
     const res = await axios.post(
       'https://www.binance.com/bapi/square/v1/private/article/add',
       payload,
       { 
         headers: { 
-          'X-Square-OpenAPI-Key': CONFIG.BINANCE_SQUARE_KEY,
+          'Authorization': `Bearer ${CONFIG.BINANCE_SQUARE_KEY}`,  // Bearer token
           'Content-Type': 'application/json'
         } 
       }
     );
 
-    if (res.data?.code === '000000') {
+    if (res.data?.code === '000000' || res.data?.success === true) {
       LOG('نجاح', '✅ تم النشر بنجاح!');
-      LOG('رابط', `المقال: ${res.data?.data?.articleId || 'تم النشر'}`);
+      LOG('رابط', `https://www.binance.com/en/square/post/${res.data?.data?.articleId || ''}`);
       return true;
     } else {
-      LOG('فشل', `الرد: ${JSON.stringify(res.data)}`);
+      LOG('فشل', JSON.stringify(res.data));
       return false;
     }
   } catch (e) {
@@ -103,21 +88,18 @@ async function publishToBinanceSquare(content) {
   }
 }
 
-// الوظيفة الرئيسية
 async function run() {
   LOG('بدء', 'جاري تحليل السوق...');
   
-  // 1. جلب العملات الرابحة
   const alphaList = await getAlphaList();
   if (!alphaList || alphaList.length === 0) {
-    LOG('خطأ', 'لا توجد بيانات للعملات');
+    LOG('خطأ', 'لا توجد بيانات');
     return;
   }
   
-  LOG('تحليل', `العملات المختارة: ${alphaList.map(c => `${c.symbol} (${c.change}%)`).join(', ')}`);
+  LOG('تحليل', `العملات: ${alphaList.map(c => `${c.symbol} (${c.change}%)`).join(', ')}`);
   
-  // 2. توليد المحتوى
-  LOG('توليد', 'جاري إنشاء المحتوى باستخدام الذكاء الاصطناعي...');
+  LOG('توليد', 'جاري إنشاء المحتوى...');
   const articleContent = await generateAIContent(alphaList);
   
   if (!articleContent) {
@@ -125,14 +107,9 @@ async function run() {
     return;
   }
   
-  LOG('محتوى', `النص: ${articleContent.substring(0, 100)}...`);
+  LOG('محتوى', articleContent);
   
-  // 3. النشر
   await publishToBinanceSquare(articleContent);
 }
 
-// تشغيل البوت
-run().catch(err => {
-  LOG('خطأ فادح', err.message);
-  process.exit(1);
-});
+run();
