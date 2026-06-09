@@ -3,10 +3,60 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const CONFIG = {
-  BINANCE_SQUARE_KEY: process.env.BINANCE_SQUARE_KEY,
+  SQUARE_API_KEY: process.env.BINANCE_SQUARE_KEY,  // نفس المفتاح
   GROQ_KEY: process.env.GROQ_API_KEY,
   MODEL: 'llama-3.3-70b-versatile'
 };
+
+async function publishToBinanceSquare(content) {
+  const headers = {
+    'X-Square-OpenAPI-Key': CONFIG.SQUARE_API_KEY,
+    'Content-Type': 'application/json',
+    'clienttype': 'binanceSkill'  // 🔑 هذا هو المفتاح السري
+  };
+  
+  const payload = {
+    bodyTextOnly: content  // النشر كنص فقط بدون تنسيق
+  };
+  
+  try {
+    const response = await axios.post(
+      'https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add',
+      payload,
+      { headers: headers }
+    );
+    
+    if (response.data?.code === '000000') {
+      console.log('✅ تم النشر بنجاح على Binance Square!');
+      return true;
+    } else {
+      console.log('❌ فشل النشر:', response.data?.message || response.data);
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ خطأ في الاتصال:', error.response?.data || error.message);
+    return false;
+  }
+}
+
+async function generateAIContent(alphaPair) {
+  const prompt = `اكتب تحليل فني قصير (فقرتين) لهذه العملات: ${JSON.stringify(alphaPair)}. 
+استخدم علامة $ قبل كل رمز. عربي فصحى فقط. انه بنصيحة استثمارية.`;
+
+  try {
+    const res = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+      model: CONFIG.MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+    }, { 
+      headers: { 'Authorization': `Bearer ${CONFIG.GROQ_KEY}` } 
+    });
+    
+    return res.data.choices[0].message.content.replace(/\*/g, '').trim();
+  } catch (e) { 
+    return null; 
+  }
+}
 
 async function getAlphaList() {
   try {
@@ -16,63 +66,31 @@ async function getAlphaList() {
       .sort((a, b) => parseFloat(b.priceChangePercent) - parseFloat(a.priceChangePercent))
       .slice(0, 4)
       .map(d => ({ symbol: d.symbol.replace('USDT', ''), change: parseFloat(d.priceChangePercent).toFixed(2) }));
-  } catch (e) {
-    console.error('خطأ في جلب البيانات:', e.message);
-    return null;
+  } catch (e) { 
+    return null; 
   }
-}
-
-async function generateAIContent(alphaPair) {
-  const prompt = `اكتب تحليل فني قصير لهذه العملات: ${JSON.stringify(alphaPair)}. استخدم $ قبل الرموز. عربي فقط.`;
-  try {
-    const res = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-      model: CONFIG.MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-    }, { headers: { 'Authorization': `Bearer ${CONFIG.GROQ_KEY}` } });
-    return res.data.choices[0].message.content.replace(/\*/g, '').trim();
-  } catch (e) {
-    console.error('خطأ في توليد المحتوى:', e.message);
-    return null;
-  }
-}
-
-async function publishToBinanceSquare(content) {
-  const endpoints = [
-    'https://www.binance.com/bapi/square/v1/private/article/add',
-    'https://www.binance.com/bapi/composite/v1/square/posts'
-  ];
-  
-  for (const url of endpoints) {
-    try {
-      console.log(`محاولة النشر عبر: ${url}`);
-      const res = await axios.post(url, {
-        title: `تحليل السوق ${new Date().toLocaleDateString('ar-EG')}`,
-        content: content,
-        contentType: "ORIGINAL",
-        language: "ar"
-      }, { headers: { 'X-Square-OpenAPI-Key': CONFIG.BINANCE_SQUARE_KEY } });
-      
-      if (res.data?.code === '000000' || res.data?.success) {
-        console.log('✅ تم النشر بنجاح!');
-        return true;
-      }
-    } catch (e) {
-      console.log(`فشل في ${url}:`, e.response?.data?.message || e.message);
-    }
-  }
-  return false;
 }
 
 async function run() {
   console.log('🚀 بدء البوت...');
+  
   const alpha = await getAlphaList();
-  if (!alpha) return;
-  console.log('📊 العملات:', alpha.map(c => `${c.symbol} (${c.change}%)`).join(', '));
-  const content = await generateAIContent(alpha);
-  if (content) {
-    await publishToBinanceSquare(content);
+  if (!alpha) {
+    console.log('❌ فشل جلب البيانات');
+    return;
   }
+  
+  console.log('📊 العملات:', alpha.map(c => `${c.symbol} (${c.change}%)`).join(', '));
+  
+  const content = await generateAIContent(alpha);
+  if (!content) {
+    console.log('❌ فشل توليد المحتوى');
+    return;
+  }
+  
+  console.log('📝 المحتوى:', content.substring(0, 200) + '...');
+  
+  await publishToBinanceSquare(content);
 }
 
 run();
